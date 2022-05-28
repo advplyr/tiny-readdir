@@ -3,16 +3,16 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import Limiter from 'promise-concurrency-limiter';
-import type {Promisable, Options, ResultDirectory, ResultDirectories, Result} from './types';
+import Limiter from './limiter'
+import type { Promisable, Options, ResultDirectory, ResultDirectories, Result } from './types';
 
 /* HELPERS */
 
-const limiter = new Limiter ({ concurrency: 500 });
+const limiter = new Limiter({ concurrency: 500 });
 
 /* MAIN */
 
-const readdir = ( rootPath: string, options?: Options ): Promise<Result> => {
+const readdir = (rootPath: string, options?: Options): Promise<Result> => {
 
   const followSymlinks = options?.followSymlinks ?? false;
   const maxDepth = options?.depth ?? Infinity;
@@ -22,153 +22,156 @@ const readdir = ( rootPath: string, options?: Options ): Promise<Result> => {
   const files: string[] = [];
   const symlinks: string[] = [];
   const map: ResultDirectories = {};
-  const visited = new Set<string> ();
+  const visited = new Set<string>();
   const resultEmpty: Result = { directories: [], files: [], symlinks: [], map: {} };
   const result: Result = { directories, files, symlinks, map };
 
-  const handleDirectory = ( dirmap: ResultDirectory, subPath: string, depth: number ): Promisable<void> => {
+  const handleDirectory = (dirmap: ResultDirectory, subPath: string, depth: number): Promisable<void> => {
 
-    if ( visited.has ( subPath ) ) return;
+    if (visited.has(subPath)) return;
 
-    dirmap.directories.push ( subPath );
-    directories.push ( subPath );
-    visited.add ( subPath );
+    dirmap.directories.push(subPath);
+    directories.push(subPath);
+    visited.add(subPath);
 
-    if ( depth >= maxDepth ) return;
+    if (depth >= maxDepth) return;
 
-    return limiter.add ( () => populateResultFromPath ( subPath, depth + 1 ) );
+    // if depth > 1 and the limiter is full, then we cannot queue this function or the current promise will never return
+    if (depth > 1 && limiter.count >= limiter.concurrency) return populateResultFromPath(subPath, depth + 1);
 
-  };
-
-  const handleFile = ( dirmap: ResultDirectory, subPath: string ): void => {
-
-    if ( visited.has ( subPath ) ) return;
-
-    dirmap.files.push ( subPath );
-    files.push ( subPath );
-    visited.add ( subPath );
+    return limiter.add(() => populateResultFromPath(subPath, depth + 1));
 
   };
 
-  const handleSymlink = ( dirmap: ResultDirectory, subPath: string, depth: number ): Promisable<void> => {
+  const handleFile = (dirmap: ResultDirectory, subPath: string): void => {
 
-    if ( visited.has ( subPath ) ) return;
+    if (visited.has(subPath)) return;
 
-    dirmap.symlinks.push ( subPath );
-    symlinks.push ( subPath );
-    visited.add ( subPath );
-
-    if ( !followSymlinks ) return;
-
-    if ( depth >= maxDepth ) return;
-
-    return limiter.add ( () => populateResultFromSymlink ( subPath, depth + 1 ) );
+    dirmap.files.push(subPath);
+    files.push(subPath);
+    visited.add(subPath);
 
   };
 
-  const handleStat = ( dirmap: ResultDirectory, rootPath: string, stat: fs.Stats, depth: number ): Promisable<void> => {
+  const handleSymlink = (dirmap: ResultDirectory, subPath: string, depth: number): Promisable<void> => {
 
-    if ( signal.aborted ) return;
+    if (visited.has(subPath)) return;
 
-    if ( isIgnored ( rootPath ) ) return;
+    dirmap.symlinks.push(subPath);
+    symlinks.push(subPath);
+    visited.add(subPath);
 
-    if ( stat.isDirectory () ) {
+    if (!followSymlinks) return;
 
-      return handleDirectory ( dirmap, rootPath, depth );
+    if (depth >= maxDepth) return;
 
-    } else if ( stat.isFile () ) {
+    return limiter.add(() => populateResultFromSymlink(subPath, depth + 1));
 
-      return handleFile ( dirmap, rootPath );
+  };
 
-    } else if ( stat.isSymbolicLink () ) {
+  const handleStat = (dirmap: ResultDirectory, rootPath: string, stat: fs.Stats, depth: number): Promisable<void> => {
 
-      return handleSymlink ( dirmap, rootPath, depth );
+    if (signal.aborted) return;
+
+    if (isIgnored(rootPath)) return;
+
+    if (stat.isDirectory()) {
+
+      return handleDirectory(dirmap, rootPath, depth);
+
+    } else if (stat.isFile()) {
+
+      return handleFile(dirmap, rootPath);
+
+    } else if (stat.isSymbolicLink()) {
+
+      return handleSymlink(dirmap, rootPath, depth);
 
     }
 
   };
 
-  const handleDirent = ( dirmap: ResultDirectory, rootPath: string, dirent: fs.Dirent, depth: number ): Promisable<void> => {
+  const handleDirent = (dirmap: ResultDirectory, rootPath: string, dirent: fs.Dirent, depth: number): Promisable<void> => {
 
-    if ( signal.aborted ) return;
+    if (signal.aborted) return;
 
     const subPath = `${rootPath}${path.sep}${dirent.name}`;
 
-    if ( isIgnored ( subPath ) ) return;
+    if (isIgnored(subPath)) return;
 
-    if ( dirent.isDirectory () ) {
+    if (dirent.isDirectory()) {
 
-      return handleDirectory ( dirmap, subPath, depth );
+      return handleDirectory(dirmap, subPath, depth);
 
-    } else if ( dirent.isFile () ) {
+    } else if (dirent.isFile()) {
 
-      return handleFile ( dirmap, subPath );
+      return handleFile(dirmap, subPath);
 
-    } else if ( dirent.isSymbolicLink () ) {
+    } else if (dirent.isSymbolicLink()) {
 
-      return handleSymlink ( dirmap, subPath, depth );
+      return handleSymlink(dirmap, subPath, depth);
 
     }
 
   };
 
-  const handleDirents = ( dirmap: ResultDirectory, rootPath: string, dirents: fs.Dirent[], depth: number ): Promise<void[]> => {
+  const handleDirents = (dirmap: ResultDirectory, rootPath: string, dirents: fs.Dirent[], depth: number): Promise<void[]> => {
 
-    return Promise.all ( dirents.map ( ( dirent ): Promisable<void> => {
+    return Promise.all(dirents.map((dirent): Promisable<void> => {
 
-      return handleDirent ( dirmap, rootPath, dirent, depth );
+      return handleDirent(dirmap, rootPath, dirent, depth);
 
     }));
 
   };
 
-  const populateResultFromPath = async ( rootPath: string, depth: number ): Promise<void> => {
+  const populateResultFromPath = async (rootPath: string, depth: number): Promise<void> => {
 
-    if ( signal.aborted ) return;
+    if (signal.aborted) return;
 
-    if ( depth > maxDepth ) return;
+    if (depth > maxDepth) return;
 
-    const dirents = await fs.promises.readdir ( rootPath, { withFileTypes: true } ).catch ( () => [] );
+    const dirents = await fs.promises.readdir(rootPath, { withFileTypes: true }).catch(() => []);
 
-    if ( signal.aborted ) return;
+    if (signal.aborted) return;
 
     const dirmap = map[rootPath] = { directories: [], files: [], symlinks: [] };
 
-    if ( !dirents.length ) return;
+    if (!dirents.length) return;
 
-    await handleDirents ( dirmap, rootPath, dirents, depth );
+    await handleDirents(dirmap, rootPath, dirents, depth);
 
   };
 
-  const populateResultFromSymlink = async ( rootPath: string, depth: number ): Promise<void> => {
+  const populateResultFromSymlink = async (rootPath: string, depth: number): Promise<void> => {
 
     try {
 
-      const realPath = await fs.promises.realpath ( rootPath );
-      const stat = await fs.promises.stat ( realPath );
+      const realPath = await fs.promises.realpath(rootPath);
+      const stat = await fs.promises.stat(realPath);
       const dirmap = map[rootPath] = { directories: [], files: [], symlinks: [] };
 
-      await handleStat ( dirmap, realPath, stat, depth );
+      await handleStat(dirmap, realPath, stat, depth);
 
-    } catch {}
+    } catch { }
 
   };
 
-  const getResult = async ( rootPath: string, depth: number = 1 ): Promise<Result> => {
+  const getResult = async (rootPath: string, depth: number = 1): Promise<Result> => {
 
-    rootPath = path.normalize ( rootPath );
+    rootPath = path.normalize(rootPath);
 
-    visited.add ( rootPath );
+    visited.add(rootPath);
 
-    await populateResultFromPath ( rootPath, depth );
+    await populateResultFromPath(rootPath, depth);
 
-    if ( signal.aborted ) return resultEmpty;
+    if (signal.aborted) return resultEmpty;
 
     return result;
 
   };
 
-  return getResult ( rootPath );
+  return getResult(rootPath);
 
 };
 

@@ -1,6 +1,6 @@
 {
-  "name": "tiny-readdir",
-  "repository": "github:fabiospampinato/tiny-readdir",
+  "name": "advplyr-tiny-readdir",
+  "repository": "github:advplyr/tiny-readdir",
   "description": "A simple promisified recursive readdir function.",
   "version": "2.0.0",
   "type": "module",
@@ -22,9 +22,6 @@
     "simple",
     "tiny"
   ],
-  "dependencies": {
-    "promise-concurrency-limiter": "^2.0.0"
-  },
   "devDependencies": {
     "@types/node": "^17.0.23",
     "fava": "^0.0.6",
